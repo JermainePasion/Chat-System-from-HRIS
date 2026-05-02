@@ -189,27 +189,27 @@ Payslip ${i + 1} (Cutoff: ${p.cutoff_date_start} to ${p.cutoff_date_end}):
 
     // 6. Build full prompt
     const employeeContext = `
-Employee Profile:
-- Full Name: ${employee.first_name} ${employee.middle_name ? employee.middle_name + " " : ""}${employee.last_name}
-- Employee ID: ${employee.employee_id || "N/A"}
-- Email: ${employee.email || "N/A"}
-- Contact: ${employee.contact_no || "N/A"}
-- Company: ${companyName}
-- Designation: ${designationName}
-- Role: ${roleName}
-- Gender: ${employee.gender || "N/A"}
-- Civil Status: ${employee.marital_status || "N/A"}
-- Sub-Location: ${employee.sub_location || "N/A"}
-- Status: ${employee.is_active === 1 ? "Active" : "Inactive"}
-- Date Joined: ${employee.date_of_joining || "N/A"}
-${employee.date_of_leaving ? `- Date of Leaving: ${employee.date_of_leaving}` : ""}
-- SSS No: ${employee.sss_no || "N/A"}
-- PhilHealth No: ${employee.philhealth_no || "N/A"}
-- Pag-IBIG No: ${employee.pagibig_no || "N/A"}
-- TIN: ${employee.tin_no || "N/A"}
-- NBI Expiry: ${employee.nbi_exp || "N/A"}
-- Healthcard Expiry: ${employee.healthcard_exp || "N/A"}
-`.trim()
+    Employee Profile:
+    - Full Name: ${employee.first_name} ${employee.middle_name ? employee.middle_name + " " : ""}${employee.last_name}
+    - Employee ID: ${employee.employee_id || "N/A"}
+    - Email: ${employee.email || "N/A"}
+    - Contact: ${employee.contact_no || "N/A"}
+    - Company: ${companyName}
+    - Designation: ${designationName}
+    - Role: ${roleName}
+    - Gender: ${employee.gender || "N/A"}
+    - Civil Status: ${employee.marital_status || "N/A"}
+    - Sub-Location: ${employee.sub_location || "N/A"}
+    - Status: ${employee.is_active === 1 ? "Active" : "Inactive"}
+    - Date Joined: ${employee.date_of_joining || "N/A"}
+    ${employee.date_of_leaving ? `- Date of Leaving: ${employee.date_of_leaving}` : ""}
+    - SSS No: ${employee.sss_no || "N/A"}
+    - PhilHealth No: ${employee.philhealth_no || "N/A"}
+    - Pag-IBIG No: ${employee.pagibig_no || "N/A"}
+    - TIN: ${employee.tin_no || "N/A"}
+    - NBI Expiry: ${employee.nbi_exp || "N/A"}
+    - Healthcard Expiry: ${employee.healthcard_exp || "N/A"}
+    `.trim()
 
     const systemPrompt = `
     You are an HR support admin assistant. Your job is to write a short, professional, and friendly reply to an employee inquiry.
@@ -229,7 +229,10 @@ ${employee.date_of_leaving ? `- Date of Leaving: ${employee.date_of_leaving}` : 
       *Based on: [what you used, e.g. "last 3 messages, payroll cutoff Apr 16–30, employee profile"]*
       Then a blank line, then the reply.
 
-    Return ONLY the citation line + reply. No subject line, no greeting label.
+    After writing the reply, you must also output a confidence score (0-100) on a NEW line at the very end in this exact format:
+    CONFIDENCE: <number>
+
+    Return ONLY the citation line + reply + confidence line. No extra commentary.
     `.trim()
 
     const userPrompt = `
@@ -271,23 +274,39 @@ Write the admin reply now.
     }
 
     const openAiJson = await openAiRes.json()
-    const draft = openAiJson.choices?.[0]?.message?.content?.trim()
+    const fullOutput = openAiJson.choices?.[0]?.message?.content?.trim()
 
-    if (!draft) {
+    if (!fullOutput) {
       return new Response(JSON.stringify({ error: "No draft generated" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
 
-    const confidence = buildConfidence(draft)
+    // Extract confidence line
+    let draft = fullOutput
+    let confidence: number | null = null
+
+    const confidenceMatch = fullOutput.match(/CONFIDENCE:\s*(\d{1,3})/i)
+    if (confidenceMatch) {
+      confidence = parseInt(confidenceMatch[1], 10)
+      draft = fullOutput.replace(confidenceMatch[0], "").trim()
+    }
+
+    // Fallback if model gives no confidence
+    if (confidence === null || isNaN(confidence)) {
+      confidence = buildConfidence(draft)
+    }
+
+    if (confidence > 100) confidence = 100
+    if (confidence < 0) confidence = 0
 
     // 8. Return draft + metadata for the UI
     return new Response(
       JSON.stringify({
         draft,
         confidence,
-        prompt: userPrompt,  
+        prompt: userPrompt,
         meta: {
           message_count: messageCount,
           payroll_cutoffs_loaded: payrollRecords.length,
